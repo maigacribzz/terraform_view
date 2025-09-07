@@ -1,4 +1,12 @@
 terraform {
+  backend "s3" {
+    bucket          = "maigation-devops-tf-state"
+    key             = "tf-infra/terraform.tfstate"
+    region          = "us-east-1"
+    dynamodb_table  = "terraform-state-locking"
+    encrypt         = true
+  }
+
   required_providers {
     aws = {
       source = "hashicorp/aws"
@@ -11,16 +19,7 @@ provider "aws" {
   region = "us-east-1"
 }
 
-# EC2 instance definition
-resource "aws_instance" "example" {
-  ami           = "ami-011899242bb902164" # Replace with a valid AMI ID
-  instance_type = "t2.micro"
-  tags = {
-    Name = "EC21.0"
-  }
-}
-
-# s3 bucket definition
+# s3 bucket definition for state file
 resource "aws_s3_bucket" "terraform_state" {
   bucket          = "maigation-devops-tf-state"
   force_destroy   = true
@@ -44,6 +43,7 @@ rule {
 }
 }
 
+# resource for state locking - to prevent multiple cordinators from terrform apply at the same time
 resource "aws_dynamodb_table" "terraform_locks" {
   name         = "terraform-state-locking"
   billing_mode = "PAY_PER_REQUEST"
