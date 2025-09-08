@@ -53,3 +53,62 @@ resource "aws_dynamodb_table" "terraform_locks" {
     type = "S"
   }
 }
+
+
+# Building infrasture for demo project
+# VPC declaration
+data "aws_vpc" "default_main" {
+  default = true
+}
+
+resource "aws_subnet" "a_subnet" {
+  vpc_id            = data.aws_vpc.default_main.id
+  availability_zone = "us-east-1a"
+  cidr_block        = cidrsubnet(data.aws_vpc.default_main.cidr_block, 4, 1)
+}
+
+# Create Route-53
+resource "aws_route53_zone" "primary" {
+  name = "maigation.com"
+}
+
+resource "aws_route53_record" "www" {
+  zone_id = aws_route53_zone.primary.zone_id
+  name    = "www.maigation.com"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.main_loadbalancer.dns_name
+    zone_id                = aws_lb.main_loadbalancer.zone_id
+    evaluate_target_health = true
+  }
+}
+
+# Application Load Balancer
+resource "aws_lb" "main_loadbalancer" {
+  name               = "main-lb-tf"
+  load_balancer_type = "application"
+  subnets            = [aws_subnet.a_subnet.id]
+}
+
+resource "aws_lb_target_group" "lb_target_group" {
+  name     = "tf-app-lb-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = data.aws_vpc.default_main.id
+}
+
+resource "aws_lb_listener" "lb_listener" {
+  load_balancer_arn = aws_lb.main_loadbalancer.arn
+  port              = "80"
+
+  default_action {
+    type             = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "404: page not found"
+      status_code  = 404
+    }
+  }
+}
