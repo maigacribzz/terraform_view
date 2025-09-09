@@ -1,11 +1,5 @@
 terraform {
-  backend "s3" {
-    bucket          = "maigation-devops-tf-state"
-    key             = "tf-infra/terraform.tfstate"
-    region          = "us-east-1"
-    dynamodb_table  = "terraform-state-locking"
-    encrypt         = true
-  }
+
 
   required_providers {
     aws = {
@@ -61,10 +55,16 @@ data "aws_vpc" "default_main" {
   default = true
 }
 
-resource "aws_subnet" "a_subnet" {
+resource "aws_subnet" "main_subnet" {
   vpc_id            = data.aws_vpc.default_main.id
   availability_zone = "us-east-1a"
-  cidr_block        = cidrsubnet(data.aws_vpc.default_main.cidr_block, 4, 1)
+  cidr_block        = cidrsubnet(data.aws_vpc.default_main.cidr_block, 4, 9)
+}
+
+resource "aws_subnet" "secondary_subnet" {
+  vpc_id            = data.aws_vpc.default_main.id
+  availability_zone = "us-east-1b"
+  cidr_block        = cidrsubnet(data.aws_vpc.default_main.cidr_block, 4, 10)
 }
 
 # Create Route-53
@@ -88,7 +88,7 @@ resource "aws_route53_record" "www" {
 resource "aws_lb" "main_loadbalancer" {
   name               = "main-lb-tf"
   load_balancer_type = "application"
-  subnets            = [aws_subnet.a_subnet.id]
+  subnets            = [aws_subnet.main_subnet.id, aws_subnet.secondary_subnet.id]
 }
 
 resource "aws_lb_target_group" "lb_target_group" {
@@ -111,4 +111,91 @@ resource "aws_lb_listener" "lb_listener" {
       status_code  = 404
     }
   }
+}
+
+# Creating the EC2 Instances
+resource "aws_instance" "main_instance" {
+  ami             = "ami-011899242bb902164" # Ubuntu 20.04 LTS
+  instance_type   = "t2.micro"
+  security_groups = [aws_security_group.instances.name]
+  user_data       = <<-EOF
+              #!/bin/bash
+              echo "HWelcome Friend" > index.html
+              python3 -m http.server 8080 &
+              EOF
+}
+
+resource "aws_instance" "secondary_instance" {
+  ami             = "ami-011899242bb902164"
+  instance_type   = "t2.micro"
+  security_groups = [aws_security_group.instances.name]
+  user_data       = <<-EOF
+              #!/bin/bash
+              echo "Welcome Friend, No downtime!!!" > index.html
+              python3 -m http.server 8080 &
+              EOF
+}
+
+resource "aws_security_group" "instances" {
+  name = "instance-security-group"
+}
+
+resource "aws_security_group_rule" "allow_http_inbound" {
+  type              = "ingress"
+  security_group_id = aws_security_group.instances.id
+
+  from_port   = 8080
+  to_port     = 8080
+  protocol    = "tcp"
+  cidr_blocks = ["0.0.0.0/0"]
+}
+
+resource "aws_lb_target_group_attachment" "instance_1" {
+  target_group_arn = aws_lb_target_group.lb_target_group.arn
+  target_id        = aws_instance.main_instance.id
+  port             = 8080
+}
+
+resource "aws_lb_target_group_attachment" "instance_2" {
+  target_group_arn = aws_lb_target_group.lb_target_group.arn
+  target_id        = aws_instance.secondary_instance.id
+  port             = 8080
+}
+
+resource "aws_security_group" "alb" {
+  name = "alb-security-group"
+}
+
+resource "aws_security_group_rule" "allow_alb_http_inbound" {
+  type              = "ingress"
+  security_group_id = aws_security_group.alb.id
+
+  from_port   = 80
+  to_port     = 80
+  protocol    = "tcp"
+  cidr_blocks = ["0.0.0.0/0"]
+
+}
+
+resource "aws_security_group_rule" "allow_alb_all_outbound" {
+  type              = "egress"
+  security_group_id = aws_security_group.alb.id
+
+  from_port   = 0
+  to_port     = 0
+  protocol    = "-1"
+  cidr_blocks = ["0.0.0.0/0"]
+
+}
+
+# Creating the Azure Database
+resource "aws_db_instance" "db_instance" {
+  allocated_storage = 20
+  storage_type               = "standard"
+  db_name                    = "mydb"
+  engine                     = "mysql"
+  instance_class             = "db.t3.micro"
+  username                   = "user"
+  password                   = "password"
+  skip_final_snapshot        = true
 }
